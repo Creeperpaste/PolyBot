@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PolyBuzz Clone - Bot Creator</title>
+    <style>
+        :root { --bg: #090b10; --panel: #151921; --accent: #9d4edd; --text: #ffffff; --user-bg: #8a2be2; }
+        body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+
+        /* HEADER / BOT CREATOR */
+        .header { background: var(--panel); padding: 15px; border-bottom: 1px solid #30363d; display: flex; flex-wrap: wrap; gap: 10px; align-items: center; z-index: 10; }
+        input, button { padding: 10px; border-radius: 8px; border: 1px solid #30363d; background: #0d1117; color: white; outline: none; }
+        .create-btn { background: var(--accent); font-weight: bold; cursor: pointer; border: none; }
+        
+        /* CHAT WINDOW (Responsive) */
+        #chat-history { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 15px; }
+        
+        /* Device Detection Styles */
+        @media (min-width: 768px) {
+            #chat-history { max-width: 800px; margin: 0 auto; width: 100%; }
+        }
+
+        /* BUBBLES */
+        .msg { max-width: 75%; padding: 12px 16px; border-radius: 18px; line-height: 1.5; position: relative; font-size: 15px; }
+        .ai { align-self: flex-start; background: #21262d; border: 1px solid #30363d; border-bottom-left-radius: 2px; }
+        .user { align-self: flex-end; background: var(--user-bg); border-bottom-right-radius: 2px; }
+
+        /* THE "TALK" BUTTON ON MESSAGES */
+        .talk-trigger { margin-top: 8px; font-size: 12px; color: #aaa; cursor: pointer; display: flex; align-items: center; gap: 5px; background: none; border: none; padding: 0; }
+        .talk-trigger:hover { color: var(--accent); }
+
+        /* FOOTER / INPUT */
+        .footer { padding: 15px; background: var(--panel); display: flex; gap: 10px; align-items: center; }
+        #user-input { flex: 1; border-radius: 25px; padding: 12px 20px; }
+
+        /* LOADING SPINNER */
+        .typing { font-style: italic; color: #8b949e; font-size: 13px; display: none; }
+    </style>
+</head>
+<body>
+
+<div class="header">
+    <strong style="color: var(--accent); margin-right: 10px;">PolyBot Builder</strong>
+    <input type="text" id="bot-name" placeholder="Character Name...">
+    <input type="text" id="wiki-url" style="flex: 1; min-width: 200px;" placeholder="Paste Wiki Link (e.g. fandom.com/wiki/Sans)">
+    <button class="create-btn" onclick="buildBot()">Create & Link Wiki</button>
+</div>
+
+<div id="chat-history">
+    <div class="msg ai">
+        Welcome to PolyBot! Paste a Wiki link above to "summon" a character. I'll read their whole page and act exactly like them.
+    </div>
+</div>
+
+<div id="typing-indicator" class="typing" style="padding-left: 20px;">Character is thinking...</div>
+
+<div class="footer">
+    <button onclick="startVoice()">🎤</button>
+    <input type="text" id="user-input" placeholder="Say something..." onkeypress="if(event.key==='Enter') sendMsg()">
+    <button class="create-btn" onclick="sendMsg()">🚀</button>
+</div>
+
+<script type="module">
+    import { GoogleGenerativeAI } from "https://esm.run/@google/genai";
+
+    const API_KEY = "AIzaSyDCdL0cje_TuG_UFMNS15qRG1Phg5ji1H0";
+    const genAI = new GoogleGenerativeAI(API_KEY);
+    
+    let botPersona = "You are a helpful roleplay assistant.";
+    let chatSession = null;
+
+    // --- 1. THE WIKI READER (The "Ingester") ---
+    window.buildBot = async () => {
+        const url = document.getElementById('wiki-url').value;
+        const name = document.getElementById('bot-name').value || "The Character";
+        if(!url) return alert("Please paste a wiki link!");
+
+        addMessage(`Reading ${name}'s Wiki pages... please wait...`, 'ai');
+
+        try {
+            // Using a proxy to bypass CORS (Browser security)
+            const proxy = "https://api.allorigins.win/get?url=";
+            const response = await fetch(proxy + encodeURIComponent(url));
+            const data = await response.json();
+            
+            // Clean HTML tags and grab a massive chunk of text
+            const rawText = data.contents.replace(/<[^>]*>/g, ' ');
+            const wikiSummary = rawText.substring(0, 10000); // 10k characters for deep context
+
+            botPersona = `You are ${name}. 
+            CRITICAL INSTRUCTIONS: Read this Wiki data: [${wikiSummary}]. 
+            You MUST copy their personality, speech patterns, and knowledge perfectly. 
+            If someone asks who you are, stay in character. Never mention being an AI.
+            Keep responses punchy and roleplay-focused.`;
+
+            // Start new chat session with the new persona
+            const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash", systemInstruction: botPersona });
+            chatSession = model.startChat({ history: [] });
+
+            addMessage(`${name} is ready! "Talk" to them now.`, 'ai');
+        } catch (e) {
+            addMessage("Error reading Wiki. Make sure the link is public!", 'ai');
+        }
+    };
+
+    // --- 2. THE CHAT LOGIC ---
+    window.sendMsg = async () => {
+        const input = document.getElementById('user-input');
+        const text = input.value.trim();
+        if(!text) return;
+
+        addMessage(text, 'user');
+        input.value = "";
+        document.getElementById('typing-indicator').style.display = "block";
+
+        if(!chatSession) {
+            const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash", systemInstruction: botPersona });
+            chatSession = model.startChat({ history: [] });
+        }
+
+        try {
+            const result = await chatSession.sendMessage(text);
+            const response = await result.response.text();
+            document.getElementById('typing-indicator').style.display = "none";
+            addMessage(response, 'ai');
+            
+            // Auto-play the voice when AI chats
+            speak(response); 
+        } catch (e) {
+            document.getElementById('typing-indicator').style.display = "none";
+            addMessage("System error. Check API key or Wiki data size.", 'ai');
+        }
+    };
+
+    // --- 3. THE VOICE SYSTEM (Speech Synthesis) ---
+    function speak(text) {
+        window.speechSynthesis.cancel(); // Stop old audio
+        const utterance = new SpeechSynthesisUtterance(text);
+        
+        // Find a cool voice (optional)
+        const voices = window.speechSynthesis.getVoices();
+        utterance.voice = voices.find(v => v.name.includes("Google")) || voices[0];
+        
+        utterance.pitch = 1.0; 
+        utterance.rate = 1.1; 
+        window.speechSynthesis.speak(utterance);
+    }
+
+    // --- 4. THE MICROPHONE (Speech Recognition) ---
+    window.startVoice = () => {
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        const recognition = new SpeechRecognition();
+        recognition.start();
+        recognition.onresult = (event) => {
+            document.getElementById('user-input').value = event.results[0][0].transcript;
+            window.sendMsg();
+        };
+    };
+
+    // --- UI HELPER ---
+    function addMessage(text, side) {
+        const history = document.getElementById('chat-history');
+        const div = document.createElement('div');
+        div.className = `msg ${side}`;
+        div.innerText = text;
+
+        if(side === 'ai') {
+            const btn = document.createElement('button');
+            btn.className = "talk-trigger";
+            btn.innerHTML = "🔊 <i>Talk</i>";
+            btn.onclick = () => speak(text);
+            div.appendChild(btn);
+        }
+
+        history.appendChild(div);
+        history.scrollTop = history.scrollHeight;
+    }
+</script>
+
+</body>
+</html>
